@@ -446,7 +446,7 @@ bool GlobalState::updateState(void)
 
 bool GlobalState::updateIdleTime(void)
 {
-  const ino::clock_ts _now = ino::clock_ms(); 
+  const ino_timestamp _now = ino::clock_ms(); 
   m_idle_time = (ino::trigger_event(_now, m_now, m_idle_time))
     ? 0 : ino::elapsed_ms(m_now+m_idle_time, _now);
   if ( m_idle_time>0 ) {

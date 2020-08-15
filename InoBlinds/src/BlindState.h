@@ -85,9 +85,9 @@ private:
   bool                m_ota_enable;
   ino::OTA            m_ota;
   
-  ino::clock_ts       m_now;
-  ino::clock_ts       m_last_command_time;
-  ino::clock_ts       m_idle_time;
+  ino_timestamp       m_now;
+  ino_timestamp       m_last_command_time;
+  ino_timestamp       m_idle_time;
   
 #ifdef BLIND_CONFIG_FILE
   BlindStateSaver     m_saver;

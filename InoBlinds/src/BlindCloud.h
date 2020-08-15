@@ -59,8 +59,8 @@ private:
   String        m_client_name;
   
   PubSubClient  m_mqtt;
-  ino::clock_ts m_mqtt_last_reconnect;
-  ino::clock_ts m_mqtt_interval;
+  ino_timestamp m_mqtt_last_reconnect;
+  ino_timestamp m_mqtt_interval;
 
   bool          m_epoch_update_flag;
 

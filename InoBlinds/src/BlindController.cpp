@@ -125,7 +125,7 @@ void BlindController::moveTo(
     return;  
   }
  
-  const ino::clock_ts t   = m_time_close * BLIND_GET_UNIT_POSITION(position);
+  const ino_timestamp t = m_time_close * BLIND_GET_UNIT_POSITION(position);
   /* Trivial check: if move to same position do nothing */
   if ((position==currentPosition()) || (t==m_time_curr)) {
     stop();
@@ -165,7 +165,7 @@ void BlindController::moveTo(
      */
     if (wait)
     {
-      const ino::delay_ts how_much = (m_time_end>m_time_curr) 
+      const ino_interval how_much = (m_time_end>m_time_curr) 
         ? (m_time_end-m_time_curr) : (m_time_curr-m_time_end);
 
       /* Add 500 ms more to be sure it is really ended */
@@ -252,14 +252,14 @@ void BlindController::sendCmd(
   }
 }
 
-bool BlindController::updateCurrentTime(const ino::delay_ts how_much)
+bool BlindController::updateCurrentTime(const ino_interval how_much)
 {
   if (how_much>0) {
     //INO_LOG_DEBUG( "how_much : "DELAY_FMT"", how_much)
     ino::wait_ms(how_much);
   }
 
-  const ino::clock_ts time_now = ino::clock_ms();
+  const ino_timestamp time_now = ino::clock_ms();
 
   //if (time_now<m_time_base+UNIT_STEP_MS) {
   if (!ino::trigger_event(time_now, m_time_base, UNIT_STEP_MS)) {
@@ -268,19 +268,19 @@ bool BlindController::updateCurrentTime(const ino::delay_ts how_much)
   }
 
   /* calculate effective elapsed time from last update */
-  const ino::delay_ts time_elapsed =  ino::elapsed_ms(time_now, m_time_base);
+  const ino_interval time_elapsed = ino::elapsed_ms(time_now, m_time_base);
   
   /* update the reference time adding last elapsed time */
   m_time_base = time_now;
 
   if (m_direction==BLIND_CLOSE)
   {
-    const ino::clock_ts curr = TIME_OFFSET + m_time_curr + time_elapsed;
+    const ino_timestamp curr = TIME_OFFSET + m_time_curr + time_elapsed;
     m_time_curr = (curr>(TIME_OFFSET+m_time_end)) ? m_time_end : (curr-TIME_OFFSET);
   } else {
     //const float ratio_open_close = (float)m_time_open/m_time_close;
-    //const ino::clock_ts curr = (m_time_curr+TIME_OFFSET) - (ratio_open_close*time_elapsed));
-    const ino::clock_ts curr = TIME_OFFSET + m_time_curr - ((m_time_open*time_elapsed)/m_time_close);
+    //const ino_timestamp curr = (m_time_curr+TIME_OFFSET) - (ratio_open_close*time_elapsed));
+    const ino_timestamp curr = TIME_OFFSET + m_time_curr - ((m_time_open*time_elapsed)/m_time_close);
     m_time_curr = (curr<(TIME_OFFSET+m_time_end)) ? m_time_end : (curr-TIME_OFFSET);
   }
 

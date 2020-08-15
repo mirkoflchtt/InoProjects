@@ -64,7 +64,7 @@ private:
                   const bool closeState);
 
   bool          updateCurrentTime(
-                  const ino::delay_ts how_much=BLIND_STEP_MS);
+                  const ino_interval how_much=BLIND_STEP_MS);
 
   bool                  m_on;
   bool                  m_stopped;
@@ -75,11 +75,11 @@ private:
 
   BlindDirection        m_direction;
   
-  ino::clock_ts         m_time_open;
-  ino::clock_ts         m_time_close;
-  ino::clock_ts         m_time_base;
-  ino::clock_ts         m_time_curr;
-  ino::clock_ts         m_time_end;
+  ino_timestamp         m_time_open;
+  ino_timestamp         m_time_close;
+  ino_timestamp         m_time_base;
+  ino_timestamp         m_time_curr;
+  ino_timestamp         m_time_end;
 
   BlindEventFunc        m_on_start_func;
   BlindEventFunc        m_on_stop_func;

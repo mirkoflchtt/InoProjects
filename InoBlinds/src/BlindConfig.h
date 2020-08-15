@@ -4,7 +4,7 @@
 
 
 #define BLIND_FIRMWARE_VERSION \
-  INO_FIRMWARE_SIGNATURE(2020,02,20,21,30,0x0)
+  INO_FIRMWARE_SIGNATURE(2020,8,14,21,0,0x0)
 
 /*
  * Option to enable/disable saving on Esp flash memory current rolling settings 
@@ -86,7 +86,6 @@
 #define BLIND_WIFI_PWD                  "<My_Password>"
 
 #define OTA_PASSWORD                    (NULL)
-//#define OTA_PASSWORD                  "HelloOta!"
 #define OTA_PORT                        (8266)
 #define OTA_ENABLE_ON_OFF_COUNT         (4)
 

@@ -133,12 +133,13 @@ void onBlindStop(
 }
 
 static
-void listenerDefault(
+ino_u32 listenerDefault(
   const ino::event_t* event, ino::listener_handle_t cookie)
 {
   INO_ASSERT(event)
   INO_LOG_SUDO("default_listener : code(%u) cookie(%p) ts("CLOCK_FMT")",
     event->code, event->cookie, event->timestamp)
+  return 0;
 }
 
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
@@ -220,7 +221,8 @@ m_ota_enable(false),
 m_ota(MQTT_CLIENT_NAME, OTA_PASSWORD, OTA_PORT, onOtaStartEnd, onOtaStartEnd, onOtaProgress, onOtaError),
 m_now(0),
 m_last_command_time(0),
-m_idle_time(BLIND_IDLE_TIME)
+m_idle_time(BLIND_IDLE_TIME),
+m_looper()
 #ifdef BLIND_CONFIG_FILE
 , m_saver(BLIND_CONFIG_FILE)
 , m_saver_context()
@@ -470,16 +472,18 @@ bool GlobalState::init(Stream* stream)
     ino::logSetStream(stream);
 
     ino::handlerInit(listenerDefault, this);
+    
+    m_looper.init();
 
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
-    ino::handlerPushLoop(loopSensorTemp1, &this->m_temperature1);
+    m_looper.pushLoop(loopSensorTemp1, &this->m_temperature1);
 #endif
 #ifdef BLIND_SENSOR2_TEMPERATURE_PIN
-    ino::handlerPushLoop(loopSensorTemp2, &this->m_temperature2);
+    m_looper.pushLoop(loopSensorTemp2, &this->m_temperature2);
 #endif
-    ino::handlerPushLoop(loopBlind, &this->m_blind);
-    ino::handlerPushLoop(loopCloud, &this->m_cloud);
-    ino::handlerPushLoop(loopStateUpdate, this);
+    m_looper.pushLoop(loopBlind, &this->m_blind);
+    m_looper.pushLoop(loopCloud, &this->m_cloud);
+    m_looper.pushLoop(loopStateUpdate, this);
     
 #ifdef BLIND_CONFIG_FILE
     m_saver.on(true);
@@ -519,13 +523,13 @@ bool GlobalState::init(Stream* stream)
     currPos = m_blind.currentPosition();
     const int32_t deltaPos = (currPos<=BLIND_MID_POSITION) ? 5 : -5;
 
-    INO_LOG_INFO("###### Testing Blinds..")
+    INO_LOG_INFO("###### Initializing Blinds..")
 
     m_blind.moveTo(currPos+deltaPos, true);
     m_blind.moveTo(currPos, true);
     currPos = m_blind.currentPosition();
     
-    INO_LOG_INFO("###### Testing Blinds OK: Actual position: %u %%" INO_CR, currPos)
+    INO_LOG_INFO("###### Initializing Blinds OK: Actual position: %u %%" INO_CR, currPos)
 
 #if ( defined BLIND_ANALOG_BUTTON || defined BLIND_REMOTE_BUTTON )
     // Disable blind controller by default
@@ -584,8 +588,8 @@ bool GlobalState::loop(void)
   }
 #endif
 
-  m_idle_time                           = (m_blind.on() || m_ota_enable) ? BLIND_IDLE_TIME : BLIND_IDLE_TIME_MAX;
-  m_now                                 = ino::clock_ms();
+  m_idle_time = (m_blind.on() || m_ota_enable) ? BLIND_IDLE_TIME : BLIND_IDLE_TIME_MAX;
+  m_now = ino::clock_ms();
   
 #ifdef LIGHT01_RELAY
   switch ( m_buttonLight01.check() ) {
@@ -618,10 +622,12 @@ bool GlobalState::loop(void)
   
   moveTo(next_pos);
 
-  if ( !m_blind.idle() ) {
+  if (!m_blind.idle()) {
     INO_LOG_DEBUG("Blind Position : %u %% Closed", m_blind.currentPosition())
     m_idle_time = 0;
   }
   
+  m_looper.loop();
+
   return ino::handlerLoop();
 }

@@ -64,6 +64,7 @@ private:
   ino::StdButton      m_buttonLight01;
   ino::PinOut         m_relayLight01;
 #endif
+
 #ifdef LIGHT02_RELAY
   ino::StdButton      m_buttonLight02;
   ino::PinOut         m_relayLight02;
@@ -89,6 +90,8 @@ private:
   ino_timestamp       m_last_command_time;
   ino_timestamp       m_idle_time;
   
+  ino::LoopHandler    m_looper;
+
 #ifdef BLIND_CONFIG_FILE
   BlindStateSaver     m_saver;
   StateSaveContext    m_saver_context;

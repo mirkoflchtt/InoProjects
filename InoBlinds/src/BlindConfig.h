@@ -4,7 +4,7 @@
 
 
 #define BLIND_FIRMWARE_VERSION \
-  INO_FIRMWARE_SIGNATURE(2020,8,14,21,0,0x0)
+  INO_FIRMWARE_SIGNATURE(2020,8,15,0,0,0x0)
 
 /*
  * Option to enable/disable saving on Esp flash memory current rolling settings 

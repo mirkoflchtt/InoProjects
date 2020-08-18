@@ -6,6 +6,9 @@
 #define BLIND_FIRMWARE_VERSION \
   INO_FIRMWARE_SIGNATURE(2020,8,15,0,0,0x0)
 
+#define BLIND_EVENT_QUEUE_SIZE          (32)
+#define BLIND_EVENT_POLLING_INTERVAL    (500)
+
 /*
  * Option to enable/disable saving on Esp flash memory current rolling settings 
  */
@@ -98,8 +101,8 @@
 #define BLIND_CLOSE_RELAY               (PIN_CLOSE_RELAY)
 #define BLIND_OPEN_RELAY                (PIN_OPEN_RELAY)
 
-#define BLIND_IDLE_TIME                 (100)
-#define BLIND_IDLE_TIME_MAX             (1000)
+#define BLIND_IDLE_TIME                 (10)
+#define BLIND_IDLE_TIME_MAX             (10)
 
 #define MQTT_CLIENT_NAME                "TestInoBlindsMQTT"
 #define MQTT_SENSOR_IDX_TEMP1           (5)       // Set Domoticz IDX here

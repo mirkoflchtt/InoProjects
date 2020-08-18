@@ -1,25 +1,18 @@
 #ifndef BLIND_CONTROLLER_H
 #define BLIND_CONTROLLER_H
 #include "BlindDefines.h"
+#include "BlindEvents.h"
 
 #define RELAY_INTER_DELAY_MSEC  (25)
 #define BLIND_STEP_MS           (25)
 
-typedef enum {
-  BLIND_IDLE    = 0x0,
-  BLIND_OPEN,
-  BLIND_CLOSE,
-} BlindDirection;
-
-typedef ino_u8 BlindPos;
-
 typedef void (*BlindEventFunc)(const ino_handle caller, const BlindPos pos, const BlindDirection direction);
-
 
 class BlindController {
 public:
 
   BlindController(
+    BlindEventHandler& event_handler,
     const bool swap_high_low,
     const ino_u8 pin_open_cmd,
     const ino_u8 pin_close_cmd,
@@ -57,6 +50,9 @@ public:
   
   bool          loop(void);
   
+  void          parse_event(
+                  const BlindEventHandler::Event& event);
+
 private:
 
   void          sendCmd(
@@ -65,6 +61,9 @@ private:
 
   bool          updateCurrentTime(
                   const ino_interval how_much=BLIND_STEP_MS);
+
+  BlindEventHandler&          m_event_handler;
+  BlindEventHandler::Listener m_event_listener;
 
   bool                  m_on;
   bool                  m_stopped;

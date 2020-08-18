@@ -55,6 +55,7 @@ bool analogReadLight02(const ino_u8 pin)
 }
 #endif
 
+/*
 void onUpdateTemperature1(
   const ino_handle caller, const float temperature, const float humidity)
 {
@@ -103,6 +104,7 @@ void onUpdateTemperature2(
   INO_UNUSED(humidity)
 #endif
 }
+*/
 
 void onBlindStart(
   const ino_handle caller, const ino_u8 pos, const BlindDirection direction)
@@ -132,19 +134,18 @@ void onBlindStop(
 #endif
 }
 
-static
-ino_u32 listenerDefault(
-  const ino::event_t* event, ino::listener_handle_t cookie)
+INO_STATIC
+void listenerDefault(
+  const BlindEventHandler::Event& event,
+  ino_handle cookie)
 {
-  INO_ASSERT(event)
-  INO_LOG_SUDO("default_listener : code(%u) cookie(%p) ts("CLOCK_FMT")",
-    event->code, event->cookie, event->timestamp)
-  return 0;
+  INO_ASSERT(cookie)
+  ((GlobalState*)cookie)->parse_event(event);
 }
 
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
 static 
-bool loopSensorTemp1(void* fn_arg)
+ino_bool loopSensorTemp1(ino_handle fn_arg)
 {
   ((ino::SensorTemperature*)fn_arg)->loop();
   return true;
@@ -153,7 +154,7 @@ bool loopSensorTemp1(void* fn_arg)
 
 #ifdef BLIND_SENSOR2_TEMPERATURE_PIN
 static 
-bool loopSensorTemp2(void* fn_arg)
+ino_bool loopSensorTemp2(ino_handle fn_arg)
 {
   ((ino::SensorTemperature*)fn_arg)->loop();
   return true;
@@ -161,26 +162,39 @@ bool loopSensorTemp2(void* fn_arg)
 #endif
 
 static
-bool loopBlind(void* fn_arg)
+ino_bool loopBlind(ino_handle fn_arg)
 {
   INO_ASSERT(fn_arg)
   return ((BlindController*)fn_arg)->loop();
 }
 
 static
-bool loopCloud(void* fn_arg)
+ino_bool loopCloud(ino_handle fn_arg)
 {
   INO_ASSERT(fn_arg)
   return ((BlindCloud*)fn_arg)->loop();
 }
 
 static
-bool loopStateUpdate(void* fn_arg)
+ino_bool loopStateUpdate(ino_handle fn_arg)
 {
   INO_ASSERT(fn_arg)
   ((GlobalState*)fn_arg)->updateState();
   ((GlobalState*)fn_arg)->updateIdleTime();
   return true;  
+}
+
+static
+ino_bool loopAlexa(ino_handle fn_arg)
+{
+  INO_ASSERT(fn_arg)
+  return ((BlindEspAlexa*)fn_arg)->loop();
+}
+
+static
+ino_bool loopEventHandler(ino_handle fn_arg)
+{
+  return ((ino::EventHandler*)fn_arg)->loop();
 }
 
 INO_API_DECLARE_END
@@ -191,6 +205,13 @@ GlobalState::GlobalState(
   OTA_CALLBACK(onOtaStartEnd),
   OTA_CALLBACK_ERROR(onOtaError),
   OTA_CALLBACK_PROGRESS(onOtaProgress)) :
+m_looper(),
+m_event_handler(BLIND_EVENT_QUEUE_SIZE),
+m_event_listener(
+  BlindEvents::BLIND_ON_START|BlindEvents::BLIND_ON_STOP|
+  BlindEvents::GOT_TEMPERATURE_HUMIDITY,
+  listenerDefault, this),
+m_alexa(m_event_handler, "Tapparella " MQTT_CLIENT_NAME),
 m_on_off_count(0),
 #ifdef BLIND_ANALOG_BUTTON
 m_buttonOpen(BLIND_ANALOG_BUTTON, LOW, &analogButtonOpenTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
@@ -200,13 +221,13 @@ m_buttonClose(BLIND_ANALOG_BUTTON, LOW, &analogButtonCloseTrigger, BLIND_BUTTON_
 m_remoteOpen(BLIND_REMOTE_OPEN, LOW, &remoteButtonTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
 m_remoteClose(BLIND_REMOTE_CLOSE, LOW, &remoteButtonTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
 #endif
-m_blind(PIN_SWAP_RELAY, BLIND_OPEN_RELAY, BLIND_CLOSE_RELAY, onBlindStart, onBlindStop, this),
-m_cloud(BLIND_WIFI_SSID, BLIND_WIFI_PWD, NULL),
+m_blind(m_event_handler, PIN_SWAP_RELAY, BLIND_OPEN_RELAY, BLIND_CLOSE_RELAY, onBlindStart, onBlindStop, this),
+m_cloud(m_event_handler, BLIND_WIFI_SSID, BLIND_WIFI_PWD, NULL),
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
-m_temperature1(BLIND_SENSOR1_TEMPERATURE_PIN, DHT22_TYPE, onUpdateTemperature1, this, BLIND_SENSOR1_TEMPERATURE_INTERVAL, true),
+m_temperature1(m_event_handler, 0x1, BLIND_SENSOR1_TEMPERATURE_PIN, DHT22_TYPE, BLIND_SENSOR1_TEMPERATURE_INTERVAL, true),
 #endif
 #ifdef BLIND_SENSOR2_TEMPERATURE_PIN
-m_temperature2(BLIND_SENSOR2_TEMPERATURE_PIN, DHT22_TYPE, onUpdateTemperature2, this, BLIND_SENSOR2_TEMPERATURE_INTERVAL, true),
+m_temperature2(m_event_handler, 0x2, BLIND_SENSOR2_TEMPERATURE_PIN, DHT22_TYPE, BLIND_SENSOR2_TEMPERATURE_INTERVAL, true),
 #endif
 #ifdef LIGHT01_RELAY
 m_buttonLight01(BLIND_ANALOG_BUTTON, LOW, &analogReadLight01, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
@@ -221,8 +242,7 @@ m_ota_enable(false),
 m_ota(MQTT_CLIENT_NAME, OTA_PASSWORD, OTA_PORT, onOtaStartEnd, onOtaStartEnd, onOtaProgress, onOtaError),
 m_now(0),
 m_last_command_time(0),
-m_idle_time(BLIND_IDLE_TIME),
-m_looper()
+m_idle_time(BLIND_IDLE_TIME)
 #ifdef BLIND_CONFIG_FILE
 , m_saver(BLIND_CONFIG_FILE)
 , m_saver_context()
@@ -383,18 +403,18 @@ bool GlobalState::handleInoMessage(const char* msg)
 
 void GlobalState::moveTo(const ino_u8 pos)
 {
-  if ( pos==BLIND_CMD_DISABLE ) {
-    m_blind.on( !m_blind.on() );
+  if (pos==BLIND_CMD_DISABLE) {
+    m_blind.on(!m_blind.on());
     m_on_off_count++;
 
     m_ota_enable = ((m_on_off_count>=OTA_ENABLE_ON_OFF_COUNT) && 
                     !m_blind.on() && m_blind.idle());
     
-    if ( m_blind.on() ) {
+    if (m_blind.on()) {
       m_cloud.updateBlindPosition(m_blind.currentPosition(), false);
     }
 
-    if ( m_ota_enable ) {
+    if (m_ota_enable) {
       INO_LOG_DEBUG("m_ota_enable    : YES (port: %d)", OTA_PORT)
     } else {
       INO_LOG_DEBUG("m_ota_enable    : NO")
@@ -405,15 +425,17 @@ void GlobalState::moveTo(const ino_u8 pos)
     return;
   }
   
-  if ( !m_blind.validPosition(pos) ) {
+  if (!m_blind.validPosition(pos)) {
     return;
   }
     
-  if ( m_blind.currentPosition()!=pos ) {
+  if (m_blind.currentPosition()!=pos) {
     m_on_off_count = 0;
     m_ota_enable   = false;
   }
     
+  m_event_handler.pushEventMoveTo(pos);
+
   m_blind.moveTo(pos, false);
 }
 
@@ -428,7 +450,7 @@ bool GlobalState::updateState(void)
 
   INO_LOG_TRACE("GlobalState::updateState: m_blind.on() : %d\n", m_blind.on())
 
-  if ( m_blind.on() ) {
+  if (m_blind.on()) {
     if ( m_cloud.connect() ) {
       m_led.high(false);
       m_cloud.setCallback(callback);
@@ -471,8 +493,8 @@ bool GlobalState::init(Stream* stream)
     ino::logSetLevel(LOG_INFO);
     ino::logSetStream(stream);
 
-    ino::handlerInit(listenerDefault, this);
-    
+    m_event_handler.init(BLIND_EVENT_POLLING_INTERVAL);
+    m_event_handler.pushListener(m_event_listener);
     m_looper.init();
 
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
@@ -485,6 +507,10 @@ bool GlobalState::init(Stream* stream)
     m_looper.pushLoop(loopCloud, &this->m_cloud);
     m_looper.pushLoop(loopStateUpdate, this);
     
+    m_looper.pushLoop(loopAlexa, &this->m_alexa);
+
+    m_looper.pushLoop(loopEventHandler, &this->m_event_handler);
+
 #ifdef BLIND_CONFIG_FILE
     m_saver.on(true);
     
@@ -514,6 +540,9 @@ bool GlobalState::init(Stream* stream)
     m_relayLight02.on();
 #endif
 */
+    m_alexa.init();
+    
+    m_cloud.init();
     m_cloud.setTimeZone(1);
     m_cloud.setDayLightSaving(0);
     m_cloud.connect();
@@ -627,7 +656,47 @@ bool GlobalState::loop(void)
     m_idle_time = 0;
   }
   
-  m_looper.loop();
+  return m_looper.loop();
+}
 
-  return ino::handlerLoop();
+void GlobalState::parse_event(
+  const BlindEventHandler::Event& event)
+{
+  const BlindEventHandler::Event::event_param param = event.get_param();
+
+  switch (event.get_code()) {
+    case BlindEvents::BLIND_ON_START:
+    case BlindEvents::BLIND_ON_STOP:
+      break;
+
+    case BlindEvents::GOT_TEMPERATURE_HUMIDITY:
+    {
+      ino_u8 sensor_id;
+      ino_float temperature, humidity;
+
+      if (m_event_handler.parseEventTemperatureHumidity(event, sensor_id, temperature, humidity))
+      {
+        if (m_blind.idle()) {
+          m_cloud.updateBlindPosition(m_blind.currentPosition());
+        }
+
+#ifdef BLIND_CONFIG_FILE
+        if (sensor_id==0x1) {
+#ifdef MQTT_SENSOR_IDX_TEMP1
+          saverContext().m_count_reads_temp1++;
+          saverStore(10);
+#endif
+        } else {
+#ifdef MQTT_SENSOR_IDX_TEMP2
+          saverContext().m_count_reads_temp2++;
+          saverStore(10);
+#endif
+        }
+      }
+#endif
+    } break;
+
+    default:
+      break;
+  }
 }

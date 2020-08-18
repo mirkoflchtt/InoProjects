@@ -5,11 +5,17 @@
 #include <PubSubClient.h>
 
 #include "BlindDefines.h"
+#include "BlindEvents.h"
 
 class BlindCloud {
 public:
-  BlindCloud(const char* ssid, const char* password, MQTT_CALLBACK_SIGNATURE);
+  BlindCloud(
+    BlindEventHandler& event_handler,
+    const char* ssid,
+    const char* password,
+    MQTT_CALLBACK_SIGNATURE);
 
+  bool          init(void);
   bool          reset(void);
 
   void          setTimeZone(const uint8_t time_zone);
@@ -25,6 +31,9 @@ public:
   void          updateDateTime(const ino::datetime_ts epoch_ms);
   
   bool          loop(void);
+
+  void          parse_event(
+                  const BlindEventHandler::Event& event);
 
   bool          updateTemperature(const uint8_t idx, const float temperature, const float humidity);
   bool          updateBlindPosition(const uint8_t pos, const bool force=false);
@@ -46,6 +55,10 @@ private:
 
   void          logStatus(const bool ok);
   
+  bool          pushEvent(const BlindEventHandler::Event& event);
+
+  BlindEventHandler&            m_event_handler;
+  BlindEventHandler::Listener   m_event_listener;
   const char*   m_ssid;
   const char*   m_password;
   MQTT_CALLBACK_SIGNATURE;

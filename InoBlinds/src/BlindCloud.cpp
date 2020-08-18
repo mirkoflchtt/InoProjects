@@ -71,13 +71,23 @@ Switching ON
   ( (flag_)==((m_state)&(flag_)) )
 
 enum {
-  STATE_NONE            = (0x0),
-  STATE_ON              = (0x1<<0),
-  STATE_INIT            = (0x1<<1),
-  STATE_CONNECTED       = (0x1<<2),
-  STATE_UDP_CONNECTED   = (0x1<<3),
+  STATE_NONE            = (0x0U),
+  STATE_ON              = (0x1U<<0),
+  STATE_INIT            = (0x1U<<1),
+  STATE_WIFI_CONNECTED  = (0x1U<<2),
+  STATE_MQTT_CONNECTED  = (0x1U<<3),
+  STATE_UDP_CONNECTED   = (0x1U<<4),
 };
 
+
+INO_STATIC
+void listenerDefault(
+  const BlindEventHandler::Event& event,
+  ino_handle cookie)
+{
+  INO_ASSERT(cookie)
+  ((BlindCloud*)cookie)->parse_event(event);
+}
 
 /* Create MQTT message payload for temperature sensor */
 bool createMQTTPayloadTemperature(
@@ -156,24 +166,33 @@ bool BlindCloud::checkWiFiConnection(void)
   const bool ok = (WiFi.status()==WL_CONNECTED);
   //const bool ok = ( WiFi.waitForConnectResult()==WL_CONNECTED );
 
-#ifdef BLIND_VERBOSE
-  if (ok && 0==(m_state&STATE_CONNECTED)) {
-    logStatus(ok);
-  }
-#endif
-
   /* Mark flag as connected or not.. */
   if (ok) {
-    m_state |= STATE_CONNECTED;
+    if (!CLOUD_IS(STATE_WIFI_CONNECTED)) {
+      pushEvent(BlindEventHandler::Event(BlindEvents::WIFI_ON_CONNECT));
+      m_state |= STATE_WIFI_CONNECTED;
+      logStatus(ok);
+    }
   } else {
-    m_state &= ~STATE_CONNECTED;
+    if (CLOUD_IS(STATE_WIFI_CONNECTED)) {
+      pushEvent(BlindEventHandler::Event(BlindEvents::WIFI_ON_DISCONNECT));
+      m_state &= ~STATE_WIFI_CONNECTED;
+    }
   }
   return ok;
 }
 
 
 BlindCloud::BlindCloud(
-  const char* ssid, const char* password, MQTT_CALLBACK_SIGNATURE) :
+  BlindEventHandler& event_handler,
+  const char* ssid,
+  const char* password,
+  MQTT_CALLBACK_SIGNATURE) :
+m_event_handler(event_handler),
+m_event_listener(
+    BlindEvents::BLIND_ON_START|BlindEvents::BLIND_ON_STOP|
+    BlindEvents::GOT_TEMPERATURE_HUMIDITY,
+    listenerDefault, this),
 m_ssid(ssid),
 m_password(password),
 m_state(STATE_NONE),
@@ -196,6 +215,12 @@ m_datetime()
   setCallback(callback);
    
   reset();
+}
+
+bool BlindCloud::init(void)
+{
+  m_event_handler.pushListener(m_event_listener);
+  return true;
 }
 
 bool BlindCloud::reset(void)
@@ -245,7 +270,7 @@ bool BlindCloud::loop(void)
       if (connected() && receiveNtpPacket()) {
         char msg[128];
         
-        if ( createMQTTPayloadEpochTime(msg, m_datetime.now_ms()) ) {
+        if (createMQTTPayloadEpochTime(msg, m_datetime.now_ms())) {
           mqttPublishMessage(msg);
         }
       }
@@ -274,15 +299,15 @@ bool BlindCloud::try_to_connect(const bool wait)
   }
 
   while (!checkWiFiConnection() && wait) {
-    delay(500);
+    delay(200);
     Serial.print(".");
   }
   
-  if (CLOUD_IS(STATE_CONNECTED)) {
+  if (CLOUD_IS(STATE_WIFI_CONNECTED)) {
     if (!CLOUD_IS(STATE_UDP_CONNECTED)) {
       m_state |= STATE_UDP_CONNECTED;
       /* connect to NTP time server */
-      m_udp.begin( NTP_SERVER_PORT );
+      m_udp.begin(NTP_SERVER_PORT);
     }
 
     mqttReconnect(false);
@@ -315,6 +340,8 @@ bool BlindCloud::disconnect( void )
     reset();
     delay(100);
     
+    pushEvent(BlindEventHandler::Event(BlindEvents::WIFI_ON_DISCONNECT));
+
     INO_LOG_INFO("BlindCloud::disconnect : 0x%08x", m_state)
   }
   
@@ -356,13 +383,21 @@ bool BlindCloud::mqttReconnect(const bool wait)
     ok &= m_mqtt.connected();
 
     if (ok) {
+      if (!CLOUD_IS(STATE_MQTT_CONNECTED)) {
+        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_CONNECT));
+        m_state |= STATE_MQTT_CONNECTED;
+      }
       ino::logSetMqtt(&m_mqtt, MQTT_LOG_TOPIC_INO);
       mqttSendBlindPosition(m_last_pos);
     } else {
+      if (CLOUD_IS(STATE_MQTT_CONNECTED)) {
+        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_DISCONNECT));
+        m_state &= ~STATE_MQTT_CONNECTED;
+      }
       ino::logSetMqtt(NULL, NULL);
     }
 
-    logStatus(ok);
+    //logStatus(ok);
     
     m_mqtt_last_reconnect = ino::clock_ms();
     
@@ -516,6 +551,13 @@ void BlindCloud::logStatus(const bool ok)
   INO_LOG_INFO("##################################################################")
 }
 
+bool BlindCloud::pushEvent(
+  const BlindEventHandler::Event& event)
+{
+  INO_LOG_INFO("[BlindCloud::pushEvent] pushed event(0x%04x)", event.get_code())
+  return m_event_handler.pushEvent(BlindEventHandler::HIGH_PRIORITY, event);
+}
+
 bool BlindCloud::updateTemperature(const ino_u8 idx, const float temperature, const float humidity)
 {
   if (connected())
@@ -550,4 +592,41 @@ bool BlindCloud::updateBlindPosition(const ino_u8 pos, const bool force)
     return mqttSendBlindPosition(pos);
   }
   return false;  
+}
+
+void BlindCloud::parse_event(
+  const BlindEventHandler::Event& event)
+{
+  const BlindEventHandler::Event::event_param param = event.get_param();
+
+  switch (event.get_code())
+  {
+    case BlindEvents::BLIND_ON_START:
+    case BlindEvents::BLIND_ON_STOP:
+      break;
+
+    case BlindEvents::GOT_TEMPERATURE_HUMIDITY:
+    {
+      ino_u8 sensor_id;
+      ino_float temperature, humidity;
+
+      if (m_event_handler.parseEventTemperatureHumidity(
+        event, sensor_id, temperature, humidity))
+      {
+
+        if (sensor_id==0x1) {
+#ifdef MQTT_SENSOR_IDX_TEMP1
+          updateTemperature(MQTT_SENSOR_IDX_TEMP1, temperature, humidity);
+#endif
+        } else {
+#ifdef MQTT_SENSOR_IDX_TEMP2
+          updateTemperature(MQTT_SENSOR_IDX_TEMP2, temperature, humidity);
+#endif
+        }
+      }
+    } break;
+
+    default:
+      break;
+  }
 }

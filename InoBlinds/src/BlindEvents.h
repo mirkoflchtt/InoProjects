@@ -1,20 +1,51 @@
 #ifndef BLIND_EVENTS_H
 #define BLIND_EVENTS_H
+#pragma once
 
-#define EVENT_PUSH_HIGH(code_, cookie_) \
-{ \
-  const event_t event_ = { .code=(code_), \
-  .cookie=(event_handle_t)(cookie_), .timestamp=ino::clock_ms() }; \
-  ino::handlerPushEvent(HIGH_PRIORITY_QUEUE, &event_); \
-}
+#include "InoTypes.h"
+#include "InoEventHandler.h"
 
-#define EVENT_PUSH_LOW(code_, cookie_) \
-{ \
-  const event_t event_ = { .code=(code_), \
-  .cookie=(event_handle_t)(cookie_), .timestamp=ino::clock_ms() }; \
-  ino::handlerPushEvent(LOW_PRIORITY_QUEUE, &event_); \
-}
+#include "BlindDefines.h"
 
-#define EVENT_BLIND_MOVE_TO           (0x00000001)
+class BlindEvents : public ino::Events
+{
+public:
+  enum {
+    BLIND_MOVE_TO       = (EVENT_LAST),
+    BLIND_ON_START      = (EVENT_LAST<<1),
+    BLIND_ON_STOP       = (EVENT_LAST<<2),
+    WIFI_ON_CONNECT     = (EVENT_LAST<<3),
+    WIFI_ON_DISCONNECT  = (EVENT_LAST<<4),
+    MQTT_ON_CONNECT     = (EVENT_LAST<<5),
+    MQTT_ON_DISCONNECT  = (EVENT_LAST<<6),
+  };
+
+private:
+
+};
+
+class BlindEventHandler : public ino::EventHandler
+{
+public:
+
+  BlindEventHandler(
+    const ino_size event_queue_size);
+
+  ino_bool pushEventMoveTo(
+    const BlindPos pos, const ino_bool wait=false);
+  
+  ino_bool parseEventMoveTo(
+    const Event& event, BlindPos& pos, ino_bool& wait);
+
+  ino_bool pushEventOnStart(
+    const BlindPos pos, const BlindDirection direction);
+  
+  ino_bool pushEventOnStop(
+    const BlindPos pos, const BlindDirection direction);
+
+private:
+  
+
+};
 
 #endif      /*BLIND_EVENTS_H*/

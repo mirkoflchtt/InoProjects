@@ -5,7 +5,7 @@
 #define RELAY_STATE_ON          (true)
 #define UNIT_STEP_MS            (10)
 
-static
+INO_STATIC
 void onEventDummy(
   const ino_handle caller, const BlindPos pos, const BlindDirection direction)
 {
@@ -14,13 +14,24 @@ void onEventDummy(
   INO_UNUSED(direction)
 }
 
+INO_STATIC
+void listenerDefault(
+  const BlindEventHandler::Event& event,
+  ino_handle cookie)
+{
+  ((BlindController*)cookie)->parse_event(event);
+}
+
 BlindController::BlindController(
+  BlindEventHandler& event_handler,
   const bool swap_high_low,
   const ino_u8 pin_open_cmd,
   const ino_u8 pin_close_cmd,
   BlindEventFunc on_start_func,
   BlindEventFunc on_stop_func,
   const ino_handle caller) :
+m_event_handler(event_handler),
+m_event_listener(BlindEvents::BLIND_MOVE_TO, listenerDefault, this),
 m_on(true),
 m_stopped(true),
 m_swap_high_low(swap_high_low),
@@ -53,7 +64,9 @@ void BlindController::on(const bool _on)
   m_on = _on;
   
   if (m_on) {
-    m_on_start_func(m_caller, currentPosition(), BLIND_IDLE);
+    const BlindPos pos = currentPosition();
+    m_on_start_func(m_caller, pos, BLIND_IDLE);
+    m_event_handler.pushEventOnStart(pos, BLIND_IDLE);
   } else {
     /* 
      * put in idle blind control
@@ -68,6 +81,8 @@ void BlindController::init(
   const ino_u32 time_close_ms,
   const BlindPos start_pos)
 {
+  m_event_handler.pushListener(m_event_listener);
+
   m_time_open         = time_open_ms;
   m_time_close        = time_close_ms;
 
@@ -143,8 +158,10 @@ void BlindController::moveTo(
 
   if (m_time_end!=m_time_curr)
   {  
+    const BlindPos pos = currentPosition();
     m_direction = (m_time_end>m_time_curr) ? BLIND_CLOSE : BLIND_OPEN;
-    m_on_start_func(m_caller, currentPosition(), m_direction);
+    m_on_start_func(m_caller, pos, m_direction);
+    m_event_handler.pushEventOnStart(pos, m_direction);
 
     if ( m_direction==BLIND_CLOSE )
     {
@@ -187,6 +204,9 @@ void BlindController::stop(void)
   sendCmd(RELAY_STATE_OFF, RELAY_STATE_OFF);
 
   m_on_stop_func(m_caller, pos, m_direction);
+
+  m_event_handler.pushEventOnStop(pos, m_direction);
+
   m_direction = BLIND_IDLE;
 }
 
@@ -207,6 +227,19 @@ bool BlindController::loop(void)
   }
   
   return true;
+}
+
+void BlindController::parse_event(
+  const BlindEventHandler::Event& event)
+{
+  const ino_timestamp _now = ino::clock_ms();
+  BlindPos pos;
+  ino_bool wait;
+  if (m_event_handler.parseEventMoveTo(event, pos, wait)) 
+  {
+    INO_LOG_SUDO("  [BlindController::parse_event] code(%u) pos(%u) wait(%d) ts("CLOCK_FMT") latency(%d)",
+      event.get_code(), pos, wait, event.get_timestamp(), _now - event.get_timestamp())
+  }
 }
 
 /***  Private Methods Section  ************************************************/

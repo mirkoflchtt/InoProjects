@@ -3,6 +3,8 @@
 #include "BlindDefines.h"
 #include "BlindConfig.h"
 #include "BlindController.h"
+#include "BlindAlexa.h"
+#include "BlindEvents.h"
 #include "BlindCloud.h"
 #include "BlindStateSave.h"
 
@@ -19,6 +21,9 @@ public:
   bool                init(Stream* stream=NULL);
   bool                reset(void);
   bool                loop(void);
+
+  void                parse_event(
+                        const BlindEventHandler::Event& event);
 
   void                updateLastCommandTime(void) { m_last_command_time = ino::clock_ms(); }
   
@@ -48,6 +53,12 @@ private:
 private:
 
   MQTT_CALLBACK_SIGNATURE;
+
+  ino::LoopHandler    m_looper;
+  BlindEventHandler   m_event_handler;
+  BlindEventHandler::Listener m_event_listener;
+  
+  BlindEspAlexa       m_alexa;
 
   ino_u8              m_on_off_count;
 #ifdef BLIND_ANALOG_BUTTON
@@ -89,8 +100,6 @@ private:
   ino_timestamp       m_now;
   ino_timestamp       m_last_command_time;
   ino_timestamp       m_idle_time;
-  
-  ino::LoopHandler    m_looper;
 
 #ifdef BLIND_CONFIG_FILE
   BlindStateSaver     m_saver;

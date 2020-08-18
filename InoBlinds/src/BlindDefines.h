@@ -5,8 +5,6 @@
 #include <stdarg.h>
 
 #include "BlindConfig.h"
-#include "BlindEvents.h"
-
 
 #define BLIND_ANALOG_BUTTON_THR_OPEN      (900)
 #define BLIND_ANALOG_BUTTON_THR_CLOSE     (700)
@@ -54,5 +52,13 @@
 #define MQTT_OUT_TOPIC_INO              "ino/messages/in/" MQTT_CLIENT_NAME
 
 #define MQTT_LOG_TOPIC_INO              "ino/log/" MQTT_CLIENT_NAME
+
+typedef ino_u8 BlindPos;
+
+typedef enum {
+  BLIND_IDLE    = 0x0,
+  BLIND_OPEN,
+  BLIND_CLOSE,
+} BlindDirection;
 
 #endif    /*BLIND_DEFINES_H*/

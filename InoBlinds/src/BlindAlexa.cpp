@@ -5,8 +5,9 @@
 INO_DECLARE_STATIC
 void dimChange(EspalexaDevice* d)
 {
-  if (d && d->getCookie()) {
-    ((BlindEspAlexa*)d->getCookie())->moveTo(d->getValue());
+  BlindEspAlexa* blind = (d && d->getCookie()) ? (BlindEspAlexa*)d->getCookie() : NULL; 
+  if (blind) {
+    blind->moveTo(d->getPercent());
   }
 }
 
@@ -18,8 +19,10 @@ void listenerDefault(
   const BlindEventHandler::Event& event,
   ino_handle cookie)
 {
-  INO_ASSERT(cookie)
-  ((BlindEspAlexa*)cookie)->parse_event(event);
+  BlindEspAlexa* alexa = (BlindEspAlexa*)cookie;
+  if (alexa) {
+    alexa->parse_event(event);
+  }
 }
 
 BlindEspAlexa::BlindEspAlexa(
@@ -34,6 +37,7 @@ m_server(server_port),
 m_device(name, dimChange, EspalexaDeviceType::dimmable, 255, this),
 m_initialized(false)
 {
+  g_alexa = &m_espalexa;
 }
 
 ino_bool BlindEspAlexa::init(void)
@@ -43,15 +47,9 @@ ino_bool BlindEspAlexa::init(void)
 
 ino_bool BlindEspAlexa::bootstrap(void)
 {
-  g_alexa = &m_espalexa;
-
-  if (!m_initialized)
-  {
+  if (!m_initialized) {
     m_server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
       request->send(200, "text/plain", "This is an example index page your server may send.");
-    });
-    m_server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
-      request->send(200, "text/plain", "This is a second subpage you may have.");
     });
     m_server.onNotFound([](AsyncWebServerRequest *request) {
       if (!g_alexa->handleAlexaApiCall(request)) // if you don't know the URI, ask espalexa whether it is an Alexa control request
@@ -90,7 +88,7 @@ ino_bool BlindEspAlexa::loop(void)
 void BlindEspAlexa::parse_event(
   const BlindEventHandler::Event& event)
 {
-  printf("[BlindEspAlexa::parse_event] event(0x%04x)" INO_CR, event.get_code());
+  INO_LOG_INFO("[BlindEspAlexa::parse_event] event(0x%04x)", event.get_code())
 
   switch (event.get_code())
   {
@@ -108,7 +106,6 @@ void BlindEspAlexa::parse_event(
 void BlindEspAlexa::moveTo(
   const uint8_t value)
 {
-  printf("[BlindEspAlexa::moveTo] : value(%u)\n\n", value);
-  BlindPos pos = ((int32_t)value) * 100 / 255;
-  m_event_handler.pushEventMoveTo(pos); 
+  INO_LOG_INFO("[BlindEspAlexa::moveTo] : value(%u)", value)
+  m_event_handler.pushEventMoveTo(value); 
 }

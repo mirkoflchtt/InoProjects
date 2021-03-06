@@ -35,8 +35,12 @@ public:
   void          parse_event(
                   const BlindEventHandler::Event& event);
 
-  bool          updateTemperature(const uint8_t idx, const float temperature, const float humidity);
-  bool          updateBlindPosition(const uint8_t pos, const bool force=false);
+  void          updateTemperature(
+                  const ino_u8 pos, const ino_u8 idx, const float temperature);
+  void          updateHumidity(
+                  const ino_u8 pos, const ino_u8 idx, const float humidity);
+
+  bool          updateBlindPosition(const ino_u8 pos, const bool force=false);
 
   ino::DateTime& dateTime(void) { return m_datetime; }
   
@@ -57,15 +61,25 @@ private:
   
   bool          pushEvent(const BlindEventHandler::Event& event);
 
+  bool          loopDirtySensors(void);
+
+  typedef struct {
+    ino_u8        dirty;
+    ino_u8        idx;
+    ino_float     temperature;
+    ino_float     humidity;
+  } SensorState;
+
   BlindEventHandler&            m_event_handler;
   BlindEventHandler::Listener   m_event_listener;
   const char*   m_ssid;
   const char*   m_password;
   MQTT_CALLBACK_SIGNATURE;
   
-  uint8_t       m_state;
-  uint8_t       m_time_zone;
-  uint8_t       m_daylight_saving;
+  ino_u8        m_dirty;
+  ino_u8        m_state;
+  ino_u8        m_time_zone;
+  ino_u8        m_daylight_saving;
   WiFiUDP       m_udp;
   // WiFiClientSecure m_client;
   WiFiClient    m_client;
@@ -77,9 +91,11 @@ private:
 
   bool          m_epoch_update_flag;
 
-  uint8_t       m_last_pos;
+  ino_u8        m_last_pos;
 
   ino::DateTime m_datetime;
+
+  std::vector<SensorState>     m_sensors;
 };
 
 #endif    /*BLIND_CLOUD_H*/

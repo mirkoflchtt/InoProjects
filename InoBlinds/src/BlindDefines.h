@@ -30,7 +30,7 @@
 #define BLIND_INVERT_POSITION(pos_) \
   ((BLIND_OPEN_POSITION+BLIND_CLOSE_POSITION)-(pos_))
 #define BLIND_VALID_POSITION(pos_) \
-  (/*((pos_)>=BLIND_MIN_POSITION) && */((pos_)<=BLIND_MAX_POSITION))
+  (((ino_i32)(pos_)>=BLIND_MIN_POSITION) && ((ino_i32)(pos_)<=BLIND_MAX_POSITION))
 
 #define BLIND_CMD_IDLE                    (BLIND_MAX_POSITION+1)
 #define BLIND_CMD_DISABLE                 (BLIND_MAX_POSITION+2)

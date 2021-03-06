@@ -3,16 +3,7 @@
 #define TIME_OFFSET             (10000000)
 #define RELAY_STATE_OFF         (false)
 #define RELAY_STATE_ON          (true)
-#define UNIT_STEP_MS            (10)
-
-INO_STATIC
-void onEventDummy(
-  const ino_handle caller, const BlindPos pos, const BlindDirection direction)
-{
-  INO_UNUSED(caller)
-  INO_UNUSED(pos)
-  INO_UNUSED(direction)
-}
+#define UNIT_STEP_MS            (5)
 
 INO_STATIC
 void listenerDefault(
@@ -27,8 +18,6 @@ BlindController::BlindController(
   const bool swap_high_low,
   const ino_u8 pin_open_cmd,
   const ino_u8 pin_close_cmd,
-  BlindEventFunc on_start_func,
-  BlindEventFunc on_stop_func,
   const ino_handle caller) :
 m_event_handler(event_handler),
 m_event_listener(BlindEvents::BLIND_MOVE_TO, listenerDefault, this),
@@ -43,8 +32,6 @@ m_time_close(0),
 m_time_base(0),
 m_time_curr(0),
 m_time_end(0),
-m_on_start_func((on_start_func) ? on_start_func : onEventDummy),
-m_on_stop_func( (on_stop_func)  ? on_stop_func  : onEventDummy),
 m_caller(caller)
 {
   pinMode(m_pin_open_cmd, OUTPUT);
@@ -64,9 +51,7 @@ void BlindController::on(const bool _on)
   m_on = _on;
   
   if (m_on) {
-    const BlindPos pos = currentPosition();
-    m_on_start_func(m_caller, pos, BLIND_IDLE);
-    m_event_handler.pushEventOnStart(pos, BLIND_IDLE);
+    m_event_handler.pushEventOnStart(currentPosition(), BLIND_IDLE);
   } else {
     /* 
      * put in idle blind control
@@ -160,10 +145,9 @@ void BlindController::moveTo(
   {  
     const BlindPos pos = currentPosition();
     m_direction = (m_time_end>m_time_curr) ? BLIND_CLOSE : BLIND_OPEN;
-    m_on_start_func(m_caller, pos, m_direction);
     m_event_handler.pushEventOnStart(pos, m_direction);
 
-    if ( m_direction==BLIND_CLOSE )
+    if (m_direction==BLIND_CLOSE)
     {
       /* we want to close the blind now */
       INO_LOG_DEBUG( "BLIND CLOSE TO : %u %%", position)    
@@ -203,8 +187,6 @@ void BlindController::stop(void)
   
   sendCmd(RELAY_STATE_OFF, RELAY_STATE_OFF);
 
-  m_on_stop_func(m_caller, pos, m_direction);
-
   m_event_handler.pushEventOnStop(pos, m_direction);
 
   m_direction = BLIND_IDLE;
@@ -233,12 +215,14 @@ void BlindController::parse_event(
   const BlindEventHandler::Event& event)
 {
   const ino_timestamp _now = ino::clock_ms();
-  BlindPos pos;
+  BlindPos position;
   ino_bool wait;
-  if (m_event_handler.parseEventMoveTo(event, pos, wait)) 
+  if (m_event_handler.parseEventMoveTo(event, position, wait)) 
   {
     INO_LOG_SUDO("  [BlindController::parse_event] code(%u) pos(%u) wait(%d) ts("CLOCK_FMT") latency(%d)",
-      event.get_code(), pos, wait, event.get_timestamp(), _now - event.get_timestamp())
+      event.get_code(), position, wait, event.get_timestamp(), _now - event.get_timestamp())
+    
+    moveTo(position, wait);
   }
 }
 
@@ -288,21 +272,20 @@ void BlindController::sendCmd(
 bool BlindController::updateCurrentTime(const ino_interval how_much)
 {
   if (how_much>0) {
-    //INO_LOG_DEBUG( "how_much : "DELAY_FMT"", how_much)
+    //printf( "[updateCurrentTime] how_much("DELAY_FMT")\n\n", how_much);
     ino::wait_ms(how_much);
   }
 
   const ino_timestamp time_now = ino::clock_ms();
 
-  //if (time_now<m_time_base+UNIT_STEP_MS) {
   if (!ino::trigger_event(time_now, m_time_base, UNIT_STEP_MS)) {
-    //printf("\ttime_elapsed(%u)\r\n", time_elapsed);
     return false;
   }
 
   /* calculate effective elapsed time from last update */
   const ino_interval time_elapsed = ino::elapsed_ms(time_now, m_time_base);
-  
+  //printf("\ttime_elapsed("DELAY_FMT")\n\n", time_elapsed);
+
   /* update the reference time adding last elapsed time */
   m_time_base = time_now;
 

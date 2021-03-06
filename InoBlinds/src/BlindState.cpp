@@ -55,84 +55,6 @@ bool analogReadLight02(const ino_u8 pin)
 }
 #endif
 
-/*
-void onUpdateTemperature1(
-  const ino_handle caller, const float temperature, const float humidity)
-{
-#ifdef MQTT_SENSOR_IDX_TEMP1
-  GlobalState* state = (GlobalState*)caller;
-  INO_ASSERT(state)
-
-  state->cloud().updateTemperature(MQTT_SENSOR_IDX_TEMP1, temperature, humidity);
-  if ( state->blind().idle() ) {
-    state->cloud().updateBlindPosition(state->blind().currentPosition());
-  }
-
-#ifdef BLIND_CONFIG_FILE
-  state->saverContext().m_count_reads_temp1++;
-  state->saverStore(10);
-#endif
-
-#else
-  INO_UNUSED(caller)
-  INO_UNUSED(temperature)
-  INO_UNUSED(humidity)
-#endif
-}
-
-void onUpdateTemperature2(
-  const ino_handle caller, const float temperature, const float humidity)
-{
-#ifdef MQTT_SENSOR_IDX_TEMP2
-  GlobalState* state = (GlobalState*)caller;
-  INO_ASSERT(state)
-
-  state->cloud().updateTemperature(MQTT_SENSOR_IDX_TEMP2, temperature, humidity);
-
-  if ( state->blind().idle() ) {
-    state->cloud().updateBlindPosition(state->blind().currentPosition());
-  }
-    
-#ifdef BLIND_CONFIG_FILE
-  state->saverContext().m_count_reads_temp2++;
-  state->saverStore(10);
-#endif
-
-#else
-  INO_UNUSED(caller)
-  INO_UNUSED(temperature)
-  INO_UNUSED(humidity)
-#endif
-}
-*/
-
-void onBlindStart(
-  const ino_handle caller, const ino_u8 pos, const BlindDirection direction)
-{
-  GlobalState* state = (GlobalState*)caller;
-  INO_ASSERT(state)
-  INO_UNUSED(pos)
-  INO_UNUSED(direction)
-  
-  state->updateLastCommandTime();
-}
-
-void onBlindStop(
-  const ino_handle caller, const ino_u8 pos, const BlindDirection direction)
-{
-  GlobalState* state = (GlobalState*)caller;
-  INO_ASSERT(state)
-  INO_LOG_TRACE("[onBlindStop] %s : pos(%u)",
-    (direction==BLIND_OPEN) ? "Opening" : "Closing", pos)
-  state->cloud().updateBlindPosition(pos);
-  state->updateLastCommandTime();
-
-#ifdef BLIND_CONFIG_FILE
-  state->saverContext().m_count_open  += (direction==BLIND_OPEN);
-  state->saverContext().m_count_close += (direction==BLIND_CLOSE);
-  state->saverStore(0);
-#endif
-}
 
 INO_STATIC
 void listenerDefault(
@@ -209,7 +131,7 @@ m_looper(),
 m_event_handler(BLIND_EVENT_QUEUE_SIZE),
 m_event_listener(
   BlindEvents::BLIND_ON_START|BlindEvents::BLIND_ON_STOP|
-  BlindEvents::GOT_TEMPERATURE_HUMIDITY,
+  BlindEvents::GOT_TEMPERATURE|BlindEvents::GOT_HUMIDITY,
   listenerDefault, this),
 m_alexa(m_event_handler, "Tapparella " MQTT_CLIENT_NAME),
 m_on_off_count(0),
@@ -221,7 +143,7 @@ m_buttonClose(BLIND_ANALOG_BUTTON, LOW, &analogButtonCloseTrigger, BLIND_BUTTON_
 m_remoteOpen(BLIND_REMOTE_OPEN, LOW, &remoteButtonTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
 m_remoteClose(BLIND_REMOTE_CLOSE, LOW, &remoteButtonTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
 #endif
-m_blind(m_event_handler, PIN_SWAP_RELAY, BLIND_OPEN_RELAY, BLIND_CLOSE_RELAY, onBlindStart, onBlindStop, this),
+m_blind(m_event_handler, PIN_SWAP_RELAY, BLIND_OPEN_RELAY, BLIND_CLOSE_RELAY, this),
 m_cloud(m_event_handler, BLIND_WIFI_SSID, BLIND_WIFI_PWD, NULL),
 #ifdef BLIND_SENSOR1_TEMPERATURE_PIN
 m_temperature1(m_event_handler, 0x1, BLIND_SENSOR1_TEMPERATURE_PIN, DHT22_TYPE, BLIND_SENSOR1_TEMPERATURE_INTERVAL, true),
@@ -360,7 +282,8 @@ bool GlobalState::handleDomoticzMessage(const char* msg)
       /* Move the blind to a fixed percentage */
       if ( (2==cmd_id) && BLIND_VALID_POSITION(cmd_value) )
       {
-          m_blind.moveTo(BLIND_INVERT_POSITION(cmd_value), false);
+         //m_blind.moveTo(BLIND_INVERT_POSITION(cmd_value), false);
+          m_event_handler.pushEventMoveTo(BLIND_INVERT_POSITION(cmd_value), false);
           INO_LOG_INFO(" GlobalState::handleDomoticzMessage to \"%s\" : moveTo() = %u",
             INO_TO_CSTRING(name), cmd_value)
       }
@@ -433,10 +356,9 @@ void GlobalState::moveTo(const ino_u8 pos)
     m_on_off_count = 0;
     m_ota_enable   = false;
   }
-    
-  m_event_handler.pushEventMoveTo(pos);
 
-  m_blind.moveTo(pos, false);
+  //m_blind.moveTo(pos, false);
+  m_event_handler.pushEventMoveTo(pos, false);
 }
 
 bool GlobalState::updateState(void)
@@ -451,7 +373,7 @@ bool GlobalState::updateState(void)
   INO_LOG_TRACE("GlobalState::updateState: m_blind.on() : %d\n", m_blind.on())
 
   if (m_blind.on()) {
-    if ( m_cloud.connect() ) {
+    if (m_cloud.connect()) {
       m_led.high(false);
       m_cloud.setCallback(callback);
     } else {
@@ -550,12 +472,16 @@ bool GlobalState::init(Stream* stream)
     m_blind.init(BLIND_OPEN_TIME_MSEC, BLIND_CLOSE_TIME_MSEC, currPos);
 
     currPos = m_blind.currentPosition();
-    const int32_t deltaPos = (currPos<=BLIND_MID_POSITION) ? 5 : -5;
+    const ino_i32 deltaPos = (currPos<=BLIND_MID_POSITION) ? 5 : -5;
 
     INO_LOG_INFO("###### Initializing Blinds..")
 
-    m_blind.moveTo(currPos+deltaPos, true);
-    m_blind.moveTo(currPos, true);
+    //m_blind.moveTo(currPos+deltaPos, true);
+    //m_blind.moveTo(currPos, true);
+    m_event_handler.pushEventMoveTo(currPos+deltaPos, true);
+    m_event_handler.pushEventMoveTo(currPos, true);
+    m_event_handler.flushQueue(ino::EventHandler::HIGH_PRIORITY);
+
     currPos = m_blind.currentPosition();
     
     INO_LOG_INFO("###### Initializing Blinds OK: Actual position: %u %%" INO_CR, currPos)
@@ -609,10 +535,10 @@ bool GlobalState::loop(void)
 #endif
 
 #ifdef BLIND_REMOTE_BUTTON
-  if ( ino::EV_NONE==openEvent ) {
+  if (ino::EV_NONE==openEvent) {
     openEvent   = m_remoteOpen.check();
   }
-  if ( ino::EV_NONE==closeEvent ) {
+  if (ino::EV_NONE==closeEvent) {
     closeEvent  = m_remoteClose.check();
   }
 #endif
@@ -621,7 +547,7 @@ bool GlobalState::loop(void)
   m_now = ino::clock_ms();
   
 #ifdef LIGHT01_RELAY
-  switch ( m_buttonLight01.check() ) {
+  switch (m_buttonLight01.check()) {
     case ino::EV_NONE:
       break;
     default:
@@ -631,7 +557,7 @@ bool GlobalState::loop(void)
 #endif
 
 #ifdef LIGHT02_RELAY
-  switch ( m_buttonLight02.check() ) {
+  switch (m_buttonLight02.check()) {
     case ino::EV_NONE:
       break;
     default:
@@ -640,13 +566,11 @@ bool GlobalState::loop(void)
   }
 #endif
 
-  if ( ino::EV_NONE!=openEvent ) {
+  if (ino::EV_NONE!=openEvent) {
     next_pos = (ino::EV_TIMEOUT==openEvent)  ? BLIND_CMD_DISABLE : BLIND_OPEN_POSITION;
-    //EVENT_PUSH_HIGH(EVENT_BLIND_MOVE_TO, next_pos)
   }
-  else if ( ino::EV_NONE!=closeEvent ) {
+  else if (ino::EV_NONE!=closeEvent) {
     next_pos = (ino::EV_TIMEOUT==closeEvent) ? BLIND_CMD_DISABLE : BLIND_CLOSE_POSITION;
-    //EVENT_PUSH_HIGH(EVENT_BLIND_MOVE_TO, next_pos)
   }
   
   moveTo(next_pos);
@@ -662,19 +586,35 @@ bool GlobalState::loop(void)
 void GlobalState::parse_event(
   const BlindEventHandler::Event& event)
 {
-  const BlindEventHandler::Event::event_param param = event.get_param();
+  BlindPos pos;
+  BlindDirection direction;
 
   switch (event.get_code()) {
     case BlindEvents::BLIND_ON_START:
+      if (m_event_handler.parseEventOnStart(event, pos, direction)) {
+        updateLastCommandTime();
+        m_led.high(true);
+      }
+    break;
     case BlindEvents::BLIND_ON_STOP:
+      if (m_event_handler.parseEventOnStop(event, pos, direction)) {
+        updateLastCommandTime();
+        m_led.high(false);
+
+#ifdef BLIND_CONFIG_FILE
+        saverContext().m_count_open  += (direction==BLIND_OPEN);
+        saverContext().m_count_close += (direction==BLIND_CLOSE);
+        saverStore(0);
+#endif
+      }
       break;
 
-    case BlindEvents::GOT_TEMPERATURE_HUMIDITY:
+    case BlindEvents::GOT_TEMPERATURE:
     {
       ino_u8 sensor_id;
-      ino_float temperature, humidity;
+      ino_float temperature;
 
-      if (m_event_handler.parseEventTemperatureHumidity(event, sensor_id, temperature, humidity))
+      if (m_event_handler.parseEventTemperature(event, sensor_id, temperature))
       {
         if (m_blind.idle()) {
           m_cloud.updateBlindPosition(m_blind.currentPosition());
@@ -694,6 +634,19 @@ void GlobalState::parse_event(
         }
       }
 #endif
+    } break;
+
+    case BlindEvents::GOT_HUMIDITY:
+    {
+      ino_u8 sensor_id;
+      ino_float humidity;
+
+      if (m_event_handler.parseEventHumidity(event, sensor_id, humidity))
+      {
+        if (m_blind.idle()) {
+          m_cloud.updateBlindPosition(m_blind.currentPosition());
+        }
+      }
     } break;
 
     default:

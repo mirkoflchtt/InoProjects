@@ -79,6 +79,7 @@ enum {
   STATE_UDP_CONNECTED   = (0x1U<<4),
 };
 
+#define DIRTY_SENSORS       (0x1U)
 
 INO_STATIC
 void listenerDefault(
@@ -191,10 +192,11 @@ BlindCloud::BlindCloud(
 m_event_handler(event_handler),
 m_event_listener(
     BlindEvents::BLIND_ON_START|BlindEvents::BLIND_ON_STOP|
-    BlindEvents::GOT_TEMPERATURE_HUMIDITY,
+    BlindEvents::GOT_TEMPERATURE|BlindEvents::GOT_HUMIDITY,
     listenerDefault, this),
 m_ssid(ssid),
 m_password(password),
+m_dirty(0x0),
 m_state(STATE_NONE),
 m_time_zone(TIME_ZONE),
 m_daylight_saving(DAY_LIGHT_SAVING),
@@ -205,7 +207,8 @@ m_mqtt(MQTT_SERVER_HOST, MQTT_SERVER_PORT, m_client),
 m_mqtt_last_reconnect(0),
 m_mqtt_interval(MQTT_RECONNECT_INTERVAL*1000),
 m_epoch_update_flag(false),
-m_datetime()
+m_datetime(),
+m_sensors(8)
 {
   m_client_name += String("-") + String(random(0xffffff), HEX);
   
@@ -263,6 +266,10 @@ bool BlindCloud::loop(void)
       return false;
     }
 
+    if (m_dirty & DIRTY_SENSORS) {
+      loopDirtySensors();
+    }
+
     if (m_epoch_update_flag) {
       sendNtpPacket( ); /* send an NTP packet to a time server */
       delay(150);
@@ -275,10 +282,8 @@ bool BlindCloud::loop(void)
         }
       }
     }
-    
     return true;
   }
-
   return false;
 }
 
@@ -554,32 +559,66 @@ void BlindCloud::logStatus(const bool ok)
 bool BlindCloud::pushEvent(
   const BlindEventHandler::Event& event)
 {
-  INO_LOG_INFO("[BlindCloud::pushEvent] pushed event(0x%04x)", event.get_code())
+  INO_LOG_INFO("[BlindCloud::pushEvent] pushed event(0x%04x) payload_u32(0x%x)", event.get_code(), event.get_u32())
   return m_event_handler.pushEvent(BlindEventHandler::HIGH_PRIORITY, event);
 }
 
-bool BlindCloud::updateTemperature(const ino_u8 idx, const float temperature, const float humidity)
+bool BlindCloud::loopDirtySensors(void)
 {
-  if (connected())
+  if (connected() && (m_dirty & DIRTY_SENSORS))
   {
     char msg[MQTT_MAX_PACKET_SIZE];
-
-    INO_LOG_DEBUG("[%s] BlindCloud::updateTemperature temperature(%f) humidity(%f)",
-      INO_TO_CSTRING(ino::printDateTime(m_datetime.now_ms())), temperature, humidity)
-          
-    if (createMQTTPayloadTemperature(msg, idx, temperature, humidity))
+    ino_u32 pos = 0;
+    for (std::vector<SensorState>::iterator it=m_sensors.begin(); it!=m_sensors.end(); it++, pos++)
     {
-      /* Publish payload to MQTT broker */
-      if (mqttPublishMessage(msg)) {
-        return true;
+      if (!it->dirty) continue;
+      INO_LOG_DEBUG("[%s] BlindCloud::loopDirtySensors pos(%d) idx(%u) temperature(%f) humidity(%f)",
+        INO_TO_CSTRING(ino::printDateTime(m_datetime.now_ms())), pos, it->idx, it->temperature, it->humidity)
+          
+      if (createMQTTPayloadTemperature(msg, it->idx, it->temperature, it->humidity))
+      {
+        /* Publish payload to MQTT broker */
+        if (mqttPublishMessage(msg)) {
+          it->dirty = false;
+          // printf(" loopDirtySensors: published message: %s\n", msg);
+          return true;
+        }
       }
     }
-    
+    INO_LOG_DEBUG("[%s] BlindCloud::loopDirtySensors flag dirty cleared. pos(%d)",
+      INO_TO_CSTRING(ino::printDateTime(m_datetime.now_ms())), pos)
+    m_dirty &= ~DIRTY_SENSORS;
+    // printf(" loopDirtySensors: reset dirty flag.\n");
   }
   return false; 
 }
 
-bool BlindCloud::updateBlindPosition(const ino_u8 pos, const bool force)
+void BlindCloud::updateTemperature(
+  const ino_u8 pos, const ino_u8 idx, const float temperature)
+{
+  m_dirty |= DIRTY_SENSORS;
+  m_sensors[pos].dirty = true;
+  m_sensors[pos].idx = idx;
+  m_sensors[pos].temperature = temperature;
+
+  INO_LOG_DEBUG("[%s] BlindCloud::updateTemperature pos(%u) idx(%u) temperature(%f)",
+    INO_TO_CSTRING(ino::printDateTime(m_datetime.now_ms())), pos, idx, temperature)
+}
+
+void BlindCloud::updateHumidity(
+  const ino_u8 pos, const ino_u8 idx, const float humidity)
+{
+  m_dirty |= DIRTY_SENSORS;
+  m_sensors[pos].dirty = true;
+  m_sensors[pos].idx = idx;
+  m_sensors[pos].humidity = humidity;
+
+  INO_LOG_DEBUG("[%s] BlindCloud::updateHumidity pos(%u) idx(%u) humidity(%f)",
+    INO_TO_CSTRING(ino::printDateTime(m_datetime.now_ms())), pos, idx, humidity)
+}
+
+bool BlindCloud::updateBlindPosition(
+  const ino_u8 pos, const bool force)
 {
   if ((!force) && (pos==m_last_pos) ) {
     return true;
@@ -597,30 +636,47 @@ bool BlindCloud::updateBlindPosition(const ino_u8 pos, const bool force)
 void BlindCloud::parse_event(
   const BlindEventHandler::Event& event)
 {
-  const BlindEventHandler::Event::event_param param = event.get_param();
-
   switch (event.get_code())
   {
     case BlindEvents::BLIND_ON_START:
     case BlindEvents::BLIND_ON_STOP:
       break;
 
-    case BlindEvents::GOT_TEMPERATURE_HUMIDITY:
+    case BlindEvents::GOT_TEMPERATURE:
     {
       ino_u8 sensor_id;
-      ino_float temperature, humidity;
+      ino_float temperature;
 
-      if (m_event_handler.parseEventTemperatureHumidity(
-        event, sensor_id, temperature, humidity))
+      if (m_event_handler.parseEventTemperature(
+        event, sensor_id, temperature))
       {
-
         if (sensor_id==0x1) {
 #ifdef MQTT_SENSOR_IDX_TEMP1
-          updateTemperature(MQTT_SENSOR_IDX_TEMP1, temperature, humidity);
+          updateTemperature(sensor_id, MQTT_SENSOR_IDX_TEMP1, temperature);
 #endif
         } else {
 #ifdef MQTT_SENSOR_IDX_TEMP2
-          updateTemperature(MQTT_SENSOR_IDX_TEMP2, temperature, humidity);
+          updateTemperature(sensor_id, MQTT_SENSOR_IDX_TEMP2, temperature);
+#endif
+        }
+      }
+    } break;
+
+    case BlindEvents::GOT_HUMIDITY:
+    {
+      ino_u8 sensor_id;
+      ino_float humidity;
+
+      if (m_event_handler.parseEventHumidity(
+        event, sensor_id, humidity))
+      {
+        if (sensor_id==0x1) {
+#ifdef MQTT_SENSOR_IDX_TEMP1
+          updateHumidity(sensor_id, MQTT_SENSOR_IDX_TEMP1, humidity);
+#endif
+        } else {
+#ifdef MQTT_SENSOR_IDX_TEMP2
+          updateHumidity(sensor_id, MQTT_SENSOR_IDX_TEMP2, humidity);
 #endif
         }
       }

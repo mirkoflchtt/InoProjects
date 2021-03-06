@@ -61,6 +61,7 @@ private:
   BlindEspAlexa       m_alexa;
 
   ino_u8              m_on_off_count;
+
 #ifdef BLIND_ANALOG_BUTTON
   ino::StdButton      m_buttonOpen;
   ino::StdButton      m_buttonClose;

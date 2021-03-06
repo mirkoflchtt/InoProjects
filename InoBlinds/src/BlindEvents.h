@@ -7,6 +7,7 @@
 
 #include "BlindDefines.h"
 
+
 class BlindEvents : public ino::Events
 {
 public:
@@ -18,6 +19,7 @@ public:
     WIFI_ON_DISCONNECT  = (EVENT_LAST<<4),
     MQTT_ON_CONNECT     = (EVENT_LAST<<5),
     MQTT_ON_DISCONNECT  = (EVENT_LAST<<6),
+    BLIND_NOTIFICATION  = (EVENT_LAST<<7),
   };
 
 private:
@@ -40,8 +42,14 @@ public:
   ino_bool pushEventOnStart(
     const BlindPos pos, const BlindDirection direction);
   
+  ino_bool parseEventOnStart(
+    const Event& event, BlindPos& pos, BlindDirection& direction);
+
   ino_bool pushEventOnStop(
     const BlindPos pos, const BlindDirection direction);
+
+  ino_bool parseEventOnStop(
+    const Event& event, BlindPos& pos, BlindDirection& direction);
 
 private:
   

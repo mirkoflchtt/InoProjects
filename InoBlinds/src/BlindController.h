@@ -6,8 +6,6 @@
 #define RELAY_INTER_DELAY_MSEC  (25)
 #define BLIND_STEP_MS           (25)
 
-typedef void (*BlindEventFunc)(const ino_handle caller, const BlindPos pos, const BlindDirection direction);
-
 class BlindController {
 public:
 
@@ -16,8 +14,6 @@ public:
     const bool swap_high_low,
     const ino_u8 pin_open_cmd,
     const ino_u8 pin_close_cmd,
-    BlindEventFunc on_start_func = NULL,
-    BlindEventFunc on_stop_func = NULL,
     const ino_handle caller = NULL);
 
   bool          on(void);
@@ -42,11 +38,6 @@ public:
 
   bool          swapHighLow(void);
   
-  void          moveTo(
-                  const BlindPos position,
-                  const bool wait);
-                  
-  void          stop(void);
   
   bool          loop(void);
   
@@ -55,6 +46,12 @@ public:
 
 private:
 
+  void          stop(void);
+
+  void          moveTo(
+                  const BlindPos position,
+                  const bool wait);
+                  
   void          sendCmd(
                   const bool openState,
                   const bool closeState);
@@ -80,8 +77,6 @@ private:
   ino_timestamp         m_time_curr;
   ino_timestamp         m_time_end;
 
-  BlindEventFunc        m_on_start_func;
-  BlindEventFunc        m_on_stop_func;
   const ino_handle      m_caller;
 };
 

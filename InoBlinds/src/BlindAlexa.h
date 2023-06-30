@@ -2,9 +2,6 @@
 #define BLIND_ALEXA_H
 #pragma once
 
-#define ESPALEXA_ASYNC
-#define ESPALEXA_DEBUG
-#define ESPALEXA_MAXDEVICES (1)
 #include <Espalexa.h>
 
 #include "BlindDefines.h"

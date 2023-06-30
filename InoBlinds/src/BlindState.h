@@ -3,11 +3,17 @@
 #include "BlindDefines.h"
 #include "BlindConfig.h"
 #include "BlindController.h"
-#include "BlindAlexa.h"
 #include "BlindEvents.h"
 #include "BlindCloud.h"
 #include "BlindStateSave.h"
 
+#ifdef BLIND_HAS_ALEXA
+#include "BlindAlexa.h"
+#endif
+
+#define STATE_FLAG_NONE                       (0x0U)
+#define STATE_FLAG_OTA_ENABLE                 (0x1U<<0)
+#define STATE_FLAG_MOVING                     (0x1U<<1)
 
 class GlobalState {
 public:
@@ -57,9 +63,10 @@ private:
   ino::LoopHandler    m_looper;
   BlindEventHandler   m_event_handler;
   BlindEventHandler::Listener m_event_listener;
-  
-  BlindEspAlexa       m_alexa;
 
+#ifdef BLIND_HAS_ALEXA
+  BlindEspAlexa       m_alexa;
+#endif
   ino_u8              m_on_off_count;
 
 #ifdef BLIND_ANALOG_BUTTON
@@ -93,9 +100,9 @@ private:
   ino::SensorTemperature m_temperature2;
 #endif
 
+  uint32_t            m_state;
   ino::PinOut         m_led;
 
-  bool                m_ota_enable;
   ino::OTA            m_ota;
   
   ino_timestamp       m_now;

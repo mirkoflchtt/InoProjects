@@ -57,7 +57,7 @@ private:
   bool          sendNtpPacket(void);
   bool          receiveNtpPacket(void); 
 
-  void          logStatus(const bool ok);
+  void          logStatus(void);
   
   bool          pushEvent(const BlindEventHandler::Event& event);
 
@@ -78,9 +78,13 @@ private:
   
   ino_u8        m_dirty;
   ino_u8        m_state;
+  ino_bool      m_state_dirty;
   ino_u8        m_time_zone;
   ino_u8        m_daylight_saving;
-  WiFiUDP       m_udp;
+  WiFiUDP       m_ntp;
+  ino_timestamp m_ntp_last_reconnect;
+  ino_timestamp m_ntp_interval;
+
   // WiFiClientSecure m_client;
   WiFiClient    m_client;
   String        m_client_name;

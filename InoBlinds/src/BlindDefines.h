@@ -35,9 +35,6 @@
 #define BLIND_CMD_IDLE                    (BLIND_MAX_POSITION+1)
 #define BLIND_CMD_DISABLE                 (BLIND_MAX_POSITION+2)
 
-#define BLIND_STATE_COMMAND_DEBOUNCE      (600)
-
-
 //#define LIGHT01_RELAY                   (3) // GPIO3
 //#define LIGHT02_RELAY                   (1) // GPIO1
 

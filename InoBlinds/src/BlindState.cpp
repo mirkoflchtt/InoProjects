@@ -11,7 +11,7 @@ bool analogButtonOpenTrigger(const ino_u8 pin)
 {
   const int v = analogRead(pin);
   //INO_LOG_TRACE("[analogButton-Open] v = %u",v);
-  return (v>=BLIND_ANALOG_BUTTON_THR_OPEN);
+  return (v >= BLIND_ANALOG_BUTTON_THR_OPEN);
 }
 
 static
@@ -19,8 +19,8 @@ bool analogButtonCloseTrigger(const ino_u8 pin)
 {
   const int v = analogRead(pin);
   //INO_LOG_TRACE("[analogButton-Close] v = %u",v);
-  return (v>=BLIND_ANALOG_BUTTON_THR_CLOSE && 
-          v<BLIND_ANALOG_BUTTON_THR_OPEN);
+  return ((v >= BLIND_ANALOG_BUTTON_THR_CLOSE) && 
+          (v < BLIND_ANALOG_BUTTON_THR_OPEN));
 }
 
 #endif    // BLIND_ANALOG_BUTTON
@@ -30,7 +30,7 @@ bool analogButtonCloseTrigger(const ino_u8 pin)
 static
 bool remoteButtonTrigger(const ino_u8 pin)
 {
-  return (digitalRead(pin)==HIGH);
+  return (digitalRead(pin) == HIGH);
 } 
 
 #endif    // BLIND_REMOTE_BUTTON
@@ -40,8 +40,8 @@ bool analogReadLight01(const ino_u8 pin)
 {
   const int v = analogRead(pin);
   INO_LOG_TRACE("[analogReadLight01] v = %u",v);
-  return (v>=BLIND_ANALOG_BUTTON_THR_LIGHT1 && 
-          v<BLIND_ANALOG_BUTTON_THR_CLOSE);
+  return ((v >= BLIND_ANALOG_BUTTON_THR_LIGHT1) && 
+          (v < BLIND_ANALOG_BUTTON_THR_CLOSE));
 }
 #endif
 
@@ -50,8 +50,8 @@ bool analogReadLight02(const ino_u8 pin)
 {
    const int v = analogRead(pin);
    INO_LOG_TRACE("[analogReadLight02] v = %u",v);
-   return (v>=BLIND_ANALOG_BUTTON_THR_LIGHT2 &&
-           v<BLIND_ANALOG_BUTTON_THR_LIGHT1);
+   return ((v >= BLIND_ANALOG_BUTTON_THR_LIGHT2) &&
+           (v < BLIND_ANALOG_BUTTON_THR_LIGHT1));
 }
 #endif
 
@@ -106,12 +106,14 @@ ino_bool loopStateUpdate(ino_handle fn_arg)
   return true;  
 }
 
+#ifdef BLIND_HAS_ALEXA
 static
 ino_bool loopAlexa(ino_handle fn_arg)
 {
   INO_ASSERT(fn_arg)
   return ((BlindEspAlexa*)fn_arg)->loop();
 }
+#endif
 
 static
 ino_bool loopEventHandler(ino_handle fn_arg)
@@ -133,7 +135,9 @@ m_event_listener(
   BlindEvents::BLIND_ON_START|BlindEvents::BLIND_ON_STOP|
   BlindEvents::GOT_TEMPERATURE|BlindEvents::GOT_HUMIDITY,
   listenerDefault, this),
+#ifdef BLIND_HAS_ALEXA
 m_alexa(m_event_handler, "Tapparella " MQTT_CLIENT_NAME),
+#endif
 m_on_off_count(0),
 #ifdef BLIND_ANALOG_BUTTON
 m_buttonOpen(BLIND_ANALOG_BUTTON, LOW, &analogButtonOpenTrigger, BLIND_BUTTON_LONG_PRESS, BLIND_BUTTON_TIMEOUT, BLIND_BUTTON_DEBOUNCE),
@@ -160,7 +164,7 @@ m_buttonLight02(BLIND_ANALOG_BUTTON, LOW, &analogReadLight02, BLIND_BUTTON_LONG_
 m_relayLight02(LIGHT02_RELAY, true),
 #endif
 m_led(BLIND_LED, false, BLIND_LED_SWAP),
-m_ota_enable(false),
+m_state(STATE_FLAG_NONE),
 m_ota(MQTT_CLIENT_NAME, OTA_PASSWORD, OTA_PORT, onOtaStartEnd, onOtaStartEnd, onOtaProgress, onOtaError),
 m_now(0),
 m_last_command_time(0),
@@ -208,10 +212,13 @@ bool GlobalState::handleDomoticzMessage(const char* msg)
   if (!ino::trigger_event(ino::clock_ms(), m_last_command_time, BLIND_STATE_COMMAND_DEBOUNCE)) {
     return false;
   }
+  m_last_command_time = ino::clock_ms();
 #endif
 
   StaticJsonDocument<MQTT_MAX_PACKET_SIZE> doc;
   const DeserializationError error = deserializeJson(doc, msg);
+
+  // INO_LOG_INFO(" GlobalState::handleDomoticzMessage() received(%d): \"%s\"", strlen(msg), msg)
 
   if ( error ) {
     INO_LOG_ERROR("GlobalState::handleDomoticzMessage() Json parsing failed")
@@ -284,7 +291,7 @@ bool GlobalState::handleDomoticzMessage(const char* msg)
       {
          //m_blind.moveTo(BLIND_INVERT_POSITION(cmd_value), false);
           m_event_handler.pushEventMoveTo(BLIND_INVERT_POSITION(cmd_value), false);
-          INO_LOG_INFO(" GlobalState::handleDomoticzMessage to \"%s\" : moveTo() = %u",
+          INO_LOG_INFO(" GlobalState::handleDomoticzMessage() to \"%s\" : moveTo() = %u",
             INO_TO_CSTRING(name), cmd_value)
       }
       parsed            = true;
@@ -330,14 +337,15 @@ void GlobalState::moveTo(const ino_u8 pos)
     m_blind.on(!m_blind.on());
     m_on_off_count++;
 
-    m_ota_enable = ((m_on_off_count>=OTA_ENABLE_ON_OFF_COUNT) && 
-                    !m_blind.on() && m_blind.idle());
-    
+    if ((m_on_off_count>=OTA_ENABLE_ON_OFF_COUNT) && !m_blind.on() && m_blind.idle()) {
+      m_state |= STATE_FLAG_OTA_ENABLE;
+    }
+
     if (m_blind.on()) {
       m_cloud.updateBlindPosition(m_blind.currentPosition(), false);
     }
 
-    if (m_ota_enable) {
+    if (m_state & STATE_FLAG_OTA_ENABLE) {
       INO_LOG_DEBUG("m_ota_enable    : YES (port: %d)", OTA_PORT)
     } else {
       INO_LOG_DEBUG("m_ota_enable    : NO")
@@ -354,26 +362,27 @@ void GlobalState::moveTo(const ino_u8 pos)
     
   if (m_blind.currentPosition()!=pos) {
     m_on_off_count = 0;
-    m_ota_enable   = false;
+    m_state   &= ~STATE_FLAG_OTA_ENABLE;
   }
 
-  //m_blind.moveTo(pos, false);
+  // m_blind.moveTo(pos, false);
   m_event_handler.pushEventMoveTo(pos, false);
 }
 
 bool GlobalState::updateState(void)
 {
   // Check if conditions are met to enable OTA server listening
-  if (m_ota_enable) {
+  if (m_state & STATE_FLAG_OTA_ENABLE) {
     m_led.blink(70);
     m_ota.loop();
     return true;
   }
 
-  INO_LOG_TRACE("GlobalState::updateState: m_blind.on() : %d\n", m_blind.on())
+  INO_LOG_DEBUG("GlobalState::updateState: m_blind.on() : %d\n", m_blind.on())
 
   if (m_blind.on()) {
     if (m_cloud.connect()) {
+      // m_led.high((m_state & STATE_FLAG_MOVING) ? true : false);
       m_led.high(false);
       m_cloud.setCallback(callback);
     } else {
@@ -393,8 +402,7 @@ bool GlobalState::updateState(void)
 bool GlobalState::updateIdleTime(void)
 {
   const ino_timestamp _now = ino::clock_ms(); 
-  m_idle_time = (ino::trigger_event(_now, m_now, m_idle_time))
-    ? 0 : ino::elapsed_ms(m_now+m_idle_time, _now);
+  m_idle_time = (ino::trigger_event(_now, m_now, m_idle_time)) ? 0 : ino::elapsed_ms(m_now+m_idle_time, _now);
   if ( m_idle_time>0 ) {
     INO_LOG_DEBUG("### Idle Time: %u", m_idle_time)
     delay(m_idle_time);
@@ -429,7 +437,9 @@ bool GlobalState::init(Stream* stream)
     m_looper.pushLoop(loopCloud, &this->m_cloud);
     m_looper.pushLoop(loopStateUpdate, this);
     
+#ifdef BLIND_HAS_ALEXA
     m_looper.pushLoop(loopAlexa, &this->m_alexa);
+#endif
 
     m_looper.pushLoop(loopEventHandler, &this->m_event_handler);
 
@@ -462,8 +472,10 @@ bool GlobalState::init(Stream* stream)
     m_relayLight02.on();
 #endif
 */
+#ifdef BLIND_HAS_ALEXA
     m_alexa.init();
-    
+#endif
+
     m_cloud.init();
     m_cloud.setTimeZone(1);
     m_cloud.setDayLightSaving(0);
@@ -543,7 +555,7 @@ bool GlobalState::loop(void)
   }
 #endif
 
-  m_idle_time = (m_blind.on() || m_ota_enable) ? BLIND_IDLE_TIME : BLIND_IDLE_TIME_MAX;
+  m_idle_time = (m_blind.on() || (m_state & STATE_FLAG_OTA_ENABLE)) ? BLIND_IDLE_TIME : BLIND_IDLE_TIME_MAX;
   m_now = ino::clock_ms();
   
 #ifdef LIGHT01_RELAY
@@ -593,13 +605,16 @@ void GlobalState::parse_event(
     case BlindEvents::BLIND_ON_START:
       if (m_event_handler.parseEventOnStart(event, pos, direction)) {
         updateLastCommandTime();
+        m_state |= STATE_FLAG_MOVING;
         m_led.high(true);
       }
     break;
     case BlindEvents::BLIND_ON_STOP:
       if (m_event_handler.parseEventOnStop(event, pos, direction)) {
         updateLastCommandTime();
+        m_state &= ~STATE_FLAG_MOVING;
         m_led.high(false);
+        m_cloud.updateBlindPosition(m_blind.currentPosition(), false);
 
 #ifdef BLIND_CONFIG_FILE
         saverContext().m_count_open  += (direction==BLIND_OPEN);

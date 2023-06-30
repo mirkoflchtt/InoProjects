@@ -219,9 +219,10 @@ void BlindController::parse_event(
   ino_bool wait;
   if (m_event_handler.parseEventMoveTo(event, position, wait)) 
   {
+    /*
     INO_LOG_SUDO("  [BlindController::parse_event] code(%u) pos(%u) wait(%d) ts("CLOCK_FMT") latency(%d)",
       event.get_code(), position, wait, event.get_timestamp(), _now - event.get_timestamp())
-    
+    */
     moveTo(position, wait);
   }
 }

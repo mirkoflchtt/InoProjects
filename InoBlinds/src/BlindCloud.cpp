@@ -76,7 +76,7 @@ enum {
   STATE_INIT            = (0x1U<<1),
   STATE_WIFI_CONNECTED  = (0x1U<<2),
   STATE_MQTT_CONNECTED  = (0x1U<<3),
-  STATE_UDP_CONNECTED   = (0x1U<<4),
+  STATE_NTP_CONNECTED   = (0x1U<<4),
 };
 
 #define DIRTY_SENSORS       (0x1U)
@@ -165,19 +165,20 @@ bool BlindCloud::checkWiFiConnection(void)
     WL_DISCONNECTED     = 6
   */
   const bool ok = (WiFi.status()==WL_CONNECTED);
-  //const bool ok = ( WiFi.waitForConnectResult()==WL_CONNECTED );
+  // const bool ok = ( WiFi.waitForConnectResult()==WL_CONNECTED );
 
   /* Mark flag as connected or not.. */
   if (ok) {
     if (!CLOUD_IS(STATE_WIFI_CONNECTED)) {
       pushEvent(BlindEventHandler::Event(BlindEvents::WIFI_ON_CONNECT));
       m_state |= STATE_WIFI_CONNECTED;
-      logStatus(ok);
+      m_state_dirty = true;
     }
   } else {
     if (CLOUD_IS(STATE_WIFI_CONNECTED)) {
       pushEvent(BlindEventHandler::Event(BlindEvents::WIFI_ON_DISCONNECT));
       m_state &= ~STATE_WIFI_CONNECTED;
+      m_state_dirty = true;
     }
   }
   return ok;
@@ -198,9 +199,12 @@ m_ssid(ssid),
 m_password(password),
 m_dirty(0x0),
 m_state(STATE_NONE),
+m_state_dirty(false),
 m_time_zone(TIME_ZONE),
 m_daylight_saving(DAY_LIGHT_SAVING),
-m_udp(),
+m_ntp(),
+m_ntp_last_reconnect(0),
+m_ntp_interval(NTP_RECONNECT_INTERVAL*1000),
 m_client(),
 m_client_name(MQTT_CLIENT_NAME),
 m_mqtt(MQTT_SERVER_HOST, MQTT_SERVER_PORT, m_client),
@@ -230,6 +234,7 @@ bool BlindCloud::reset(void)
 {
   m_epoch_update_flag   = true;
   m_state               = STATE_NONE;
+  m_state_dirty         = false;
   m_last_pos            = ~0;
   m_mqtt_last_reconnect = 0;
   
@@ -282,8 +287,12 @@ bool BlindCloud::loop(void)
         }
       }
     }
+
+    logStatus();
     return true;
   }
+
+  logStatus();
   return false;
 }
 
@@ -309,10 +318,10 @@ bool BlindCloud::try_to_connect(const bool wait)
   }
   
   if (CLOUD_IS(STATE_WIFI_CONNECTED)) {
-    if (!CLOUD_IS(STATE_UDP_CONNECTED)) {
-      m_state |= STATE_UDP_CONNECTED;
+    if (!CLOUD_IS(STATE_NTP_CONNECTED)) {
+      m_state |= STATE_NTP_CONNECTED;
       /* connect to NTP time server */
-      m_udp.begin(NTP_SERVER_PORT);
+      m_ntp.begin(NTP_SERVER_PORT);
     }
 
     mqttReconnect(false);
@@ -320,7 +329,7 @@ bool BlindCloud::try_to_connect(const bool wait)
     return true;
   }
 
-  m_state &= ~STATE_UDP_CONNECTED;
+  m_state &= ~STATE_NTP_CONNECTED;
   return false;
 }
 
@@ -389,21 +398,21 @@ bool BlindCloud::mqttReconnect(const bool wait)
 
     if (ok) {
       if (!CLOUD_IS(STATE_MQTT_CONNECTED)) {
-        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_CONNECT));
         m_state |= STATE_MQTT_CONNECTED;
+        m_state_dirty = true;
+        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_CONNECT));
       }
       ino::logSetMqtt(&m_mqtt, MQTT_LOG_TOPIC_INO);
       mqttSendBlindPosition(m_last_pos);
     } else {
       if (CLOUD_IS(STATE_MQTT_CONNECTED)) {
-        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_DISCONNECT));
         m_state &= ~STATE_MQTT_CONNECTED;
+        m_state_dirty = true;
+        pushEvent(BlindEventHandler::Event(BlindEvents::MQTT_ON_DISCONNECT));
       }
       ino::logSetMqtt(NULL, NULL);
     }
-
-    //logStatus(ok);
-    
+  
     m_mqtt_last_reconnect = ino::clock_ms();
     
     return ok;
@@ -424,6 +433,8 @@ bool BlindCloud::mqttDisconnect(void)
     m_mqtt.unsubscribe(MQTT_IN_TOPIC_INO);
     m_mqtt.setCallback(NULL);
     m_mqtt.disconnect();
+    m_state_dirty = true;
+
     delay(100);
     
     return (!m_mqtt.connected());
@@ -469,7 +480,7 @@ bool BlindCloud::mqttPublishMessage(const char* msg)
 // Handlers for NTP Server interfacing..
 bool BlindCloud::sendNtpPacket(void)
 {
-  if (!CLOUD_IS(STATE_UDP_CONNECTED)) {
+  if (!CLOUD_IS(STATE_NTP_CONNECTED)) {
     return false;
   }
     
@@ -499,9 +510,9 @@ bool BlindCloud::sendNtpPacket(void)
    * all NTP fields have been given values, now
    * you can send a packet requesting a timestamp:
    */
-  m_udp.beginPacket(ntpServerIP, 123); // NTP requests are to port 123
-  m_udp.write(packetBuffer, sizeof(packetBuffer));
-  m_udp.endPacket();
+  m_ntp.beginPacket(ntpServerIP, 123); // NTP requests are to port 123
+  m_ntp.write(packetBuffer, sizeof(packetBuffer));
+  m_ntp.endPacket();
 
   INO_LOG_DEBUG("BlindCloud::sendNtpPacket NTP packet sent...")
 
@@ -513,40 +524,34 @@ bool BlindCloud::receiveNtpPacket(void)
   ino_bool ok = false;
   ino_u8 packetBuffer[INO_NTP_PACKET_SIZE] = {0};
     
-  if (m_udp.parsePacket()>=(int)sizeof(packetBuffer))
+  if (m_ntp.parsePacket() >= (int)sizeof(packetBuffer))
   {
-    m_udp.read(packetBuffer, sizeof(packetBuffer));
+    m_ntp.read(packetBuffer, sizeof(packetBuffer));
     m_datetime.set_base_ts(m_datetime.ntp_to_datetime(packetBuffer),
                            m_time_zone+m_daylight_saving);
         
     INO_LOG_DEBUG("BlindCloud : NTP Packet received (%lu)",
-                  (ino_u32)(m_datetime.now_ms()/1000))
+                  (ino_u32)(m_datetime.now_ms() / 1000))
 
     ok                  = true;
     m_epoch_update_flag = false;
+    m_state_dirty       = true;
+    m_ntp_last_reconnect = ino::clock_ms();
   }
       
-  while (m_udp.parsePacket()>0) {   /* clean-up buffer */
-    m_udp.read(packetBuffer, sizeof(packetBuffer));
+  while (m_ntp.parsePacket()>0) {   /* clean-up buffer */
+    m_ntp.read(packetBuffer, m_ntp.parsePacket());
   }
+
   return ok;
 }
 
-void BlindCloud::logStatus(const bool ok)
+void BlindCloud::logStatus(void)
 {
-  INO_LOG_INFO("###################################################################")
-  INO_LOG_INFO("###### BlindCloud  : WiFI Connected to SSID \"%s\"on channel %u",
-    INO_TO_CSTRING(WiFi.SSID()), WiFi.channel())
-  INO_LOG_INFO("###### IP address  : %s",
-    INO_TO_CSTRING(WiFi.localIP().toString()))
-  INO_LOG_INFO("###### MAC address : %s",
-    INO_TO_CSTRING(WiFi.macAddress()))
-  INO_LOG_INFO("###### Subnet mask : %s",
-    INO_TO_CSTRING(WiFi.subnetMask().toString()))
-  INO_LOG_INFO("###### Gateway     : %s",
-    INO_TO_CSTRING(WiFi.gatewayIP().toString()))
-  INO_LOG_INFO("###### DNS Server  : %s",
-    INO_TO_CSTRING(WiFi.dnsIP().toString()))
+  if (!m_state_dirty) return;
+
+  const ino_bool ok = CLOUD_IS(STATE_WIFI_CONNECTED|STATE_MQTT_CONNECTED);
+
   INO_LOG_INFO("##################################################################")
   INO_LOG_INFO("###### Firmware Revision         : %s",
     INO_TO_CSTRING(ino::getFirmwareVersion(BLIND_FIRMWARE_VERSION)))
@@ -554,12 +559,34 @@ void BlindCloud::logStatus(const bool ok)
     INO_TO_CSTRING(m_client_name))
   INO_LOG_INFO("###### Client State              : %s", (ok) ? "OK" : "Error!")
   INO_LOG_INFO("##################################################################")
+  if (CLOUD_IS(STATE_WIFI_CONNECTED)) {
+    INO_LOG_INFO("###### WiFi : Connected to SSID \"%s\" on channel %u",
+      INO_TO_CSTRING(WiFi.SSID()), WiFi.channel())
+    INO_LOG_INFO("###### IP address  : %s",
+      INO_TO_CSTRING(WiFi.localIP().toString()))
+    INO_LOG_INFO("###### MAC address : %s",
+      INO_TO_CSTRING(WiFi.macAddress()))
+    INO_LOG_INFO("###### Subnet mask : %s",
+      INO_TO_CSTRING(WiFi.subnetMask().toString()))
+    INO_LOG_INFO("###### Gateway     : %s",
+      INO_TO_CSTRING(WiFi.gatewayIP().toString()))
+    INO_LOG_INFO("###### DNS Server  : %s",
+      INO_TO_CSTRING(WiFi.dnsIP().toString()))
+  }
+  if (CLOUD_IS(STATE_MQTT_CONNECTED)) {
+    INO_LOG_INFO("###### MQTT        : %s", "Connected")
+  }
+  if (CLOUD_IS(STATE_NTP_CONNECTED)) {
+    INO_LOG_INFO("###### NTP Server  : %s", "Connected")
+  }
+
+  m_state_dirty = false;
 }
 
 bool BlindCloud::pushEvent(
   const BlindEventHandler::Event& event)
 {
-  INO_LOG_INFO("[BlindCloud::pushEvent] pushed event(0x%04x) payload_u32(0x%x)", event.get_code(), event.get_u32())
+  // INO_LOG_INFO("[BlindCloud::pushEvent] pushed event(0x%04x) payload_u32(0x%x)", event.get_code(), event.get_u32())
   return m_event_handler.pushEvent(BlindEventHandler::HIGH_PRIORITY, event);
 }
 

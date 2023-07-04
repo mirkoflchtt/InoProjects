@@ -2,11 +2,12 @@
 #define BLIND_CONFIG_H
 #include "BlindConfigPins.h"
 
+// #define BLIND_HAS_ALEXA
 
 #define BLIND_FIRMWARE_VERSION \
-  INO_FIRMWARE_SIGNATURE(2021,2,14,0,0,0x0)
+  INO_FIRMWARE_SIGNATURE(2023,6,30,0,0,0x0)
 
-#define BLIND_EVENT_QUEUE_SIZE          (32)
+#define BLIND_EVENT_QUEUE_SIZE          (64)
 #define BLIND_EVENT_POLLING_INTERVAL    (500)
 
 /*
@@ -48,7 +49,7 @@
 #undef BLIND_SENSOR1_TEMPERATURE_INTERVAL
 #if (defined PIN_TEMP1)
 #define BLIND_SENSOR1_TEMPERATURE_PIN         (PIN_TEMP1)
-#define BLIND_SENSOR1_TEMPERATURE_INTERVAL    (5*60)      // in seconds
+#define BLIND_SENSOR1_TEMPERATURE_INTERVAL    (5 * 60)      // in seconds
 #endif
 
 /*
@@ -58,7 +59,7 @@
 #undef BLIND_SENSOR2_TEMPERATURE_INTERVAL
 #if (defined PIN_TEMP2)
 #define BLIND_SENSOR2_TEMPERATURE_PIN         (PIN_TEMP2)
-#define BLIND_SENSOR2_TEMPERATURE_INTERVAL    (5*60)      // in seconds
+#define BLIND_SENSOR2_TEMPERATURE_INTERVAL    (5 * 60)      // in seconds
 #endif
 
 /*
@@ -77,6 +78,8 @@
 
 #define BLIND_VERBOSE
 //#define BLIND_DEBUGGING
+
+#define BLIND_STATE_COMMAND_DEBOUNCE    (200)
 
 #define BLIND_BUTTON_LONG_PRESS         (500)
 #define BLIND_BUTTON_TIMEOUT            (1500)
@@ -97,6 +100,8 @@
 //#define MQTT_SERVER_HOST              IPAddress(192,168,33,1)
 #define MQTT_SERVER_PORT                (1883)
 #define MQTT_RECONNECT_INTERVAL         (60)
+
+#define NTP_RECONNECT_INTERVAL          (60)
 
 #define BLIND_CLOSE_RELAY               (PIN_CLOSE_RELAY)
 #define BLIND_OPEN_RELAY                (PIN_OPEN_RELAY)
